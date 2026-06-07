@@ -1,111 +1,147 @@
-import React from "react";
-import { StyleSheet, View, Text, TouchableOpacity } from "react-native";
-import Icon from "react-native-vector-icons/MaterialCommunityIcons";
-import { Colors } from "../theme/colors";
-
-const REPORT_TYPES = [
-  {
-    id: "1",
-    label: "Accident Récent",
-    icon: "car-crash",
-    color: Colors.danger,
-  },
-  {
-    id: "2",
-    label: "Zone Dangereuse",
-    icon: "alert-octagon",
-    color: Colors.primary,
-  },
-  {
-    id: "3",
-    label: "Embouteillage Hard",
-    icon: "traffic-light",
-    color: Colors.accent,
-  },
-  { id: "4", label: "Chaussée Inondée", icon: "water", color: "#33B5E5" },
-];
+import React, { useState } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  TextInput,
+  SafeAreaView,
+  ScrollView,
+} from "react-native";
+import { useNavigation } from "@react-navigation/native";
+import { colors } from "../theme/Theme";
 
 export default function ReportScreen() {
+  const navigation = useNavigation();
+  const [riskType, setRiskType] = useState("");
+  const [description, setDescription] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const riskOptions = [
+    { label: "Nid-de-poule", value: "pothole" },
+    { label: "Accident / Point noir", value: "blackspot" },
+    { label: "Animal sur la route", value: "animal" },
+    { label: "Éboulement", value: "landslide" },
+    { label: "Inondation", value: "flood" },
+    { label: "Virage dangereux", value: "curve" },
+  ];
+
+  const handleSubmit = () => {
+    setSubmitting(true);
+    // Simulation d'envoi
+    setTimeout(() => {
+      alert("✅ Signalement envoyé ! Merci pour votre contribution.");
+      navigation.goBack();
+      setSubmitting(false);
+    }, 1500);
+  };
+
   return (
-    <View style={styles.container}>
-      <Text style={styles.header}>Signalement Rapide</Text>
-      <Text style={styles.subHeader}>
-        Alertez la communauté d'Antananarivo en un clic.
-      </Text>
+    <SafeAreaView style={styles.container}>
+      <ScrollView contentContainerStyle={styles.scroll}>
+        <Text style={styles.title}>Signaler un Danger</Text>
+        <Text style={styles.subtitle}>
+          Aidez à rendre les routes plus sûres
+        </Text>
 
-      <View style={styles.grid}>
-        {REPORT_TYPES.map((item) => (
-          <TouchableOpacity key={item.id} style={styles.card}>
-            <View
+        <Text style={styles.label}>Type de danger :</Text>
+        <View style={styles.optionsContainer}>
+          {riskOptions.map((option) => (
+            <TouchableOpacity
+              key={option.value}
               style={[
-                styles.iconWrapper,
-                { backgroundColor: item.color + "15" },
+                styles.optionButton,
+                riskType === option.value && styles.optionSelected,
               ]}
+              onPress={() => setRiskType(option.value)}
             >
-              <Icon name={item.icon} size={38} color={item.color} />
-            </View>
-            <Text style={styles.cardLabel}>{item.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+              <Text
+                style={
+                  riskType === option.value
+                    ? styles.optionTextSelected
+                    : styles.optionText
+                }
+              >
+                {option.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
 
-      <TouchableOpacity style={styles.vocalAction}>
-        <Icon name="microphone" size={26} color={Colors.background} />
-        <Text style={styles.vocalText}>SIGNALER PAR LA VOIX</Text>
-      </TouchableOpacity>
-    </View>
+        <Text style={styles.label}>Description (optionnel) :</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="Ex: Gros trou au milieu de la route..."
+          multiline
+          numberOfLines={4}
+          value={description}
+          onChangeText={setDescription}
+        />
+
+        <TouchableOpacity
+          style={styles.submitButton}
+          onPress={handleSubmit}
+          disabled={!riskType || submitting}
+        >
+          <Text style={styles.submitButtonText}>
+            {submitting ? "Envoi en cours..." : "Envoyer le Signalement"}
+          </Text>
+        </TouchableOpacity>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: Colors.background,
-    padding: 24,
-    paddingTop: 60,
+  container: { flex: 1, backgroundColor: colors.background },
+  scroll: { padding: 20 },
+  title: {
+    fontSize: 26,
+    fontWeight: "bold",
+    color: colors.primary,
+    marginBottom: 8,
   },
-  header: { color: Colors.text, fontSize: 26, fontWeight: "bold" },
-  subHeader: {
-    color: Colors.textSecondary,
-    fontSize: 14,
-    marginBottom: 35,
-    marginTop: 5,
+  subtitle: { fontSize: 16, color: colors.textLight, marginBottom: 25 },
+  label: {
+    fontSize: 16,
+    fontWeight: "600",
+    marginBottom: 10,
+    color: colors.text,
   },
-  grid: {
+  optionsContainer: {
     flexDirection: "row",
     flexWrap: "wrap",
-    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: 25,
   },
-  card: {
-    width: "47%",
-    backgroundColor: Colors.surface,
-    borderRadius: 22,
-    padding: 20,
-    alignItems: "center",
-    marginBottom: 20,
+  optionButton: {
+    backgroundColor: "white",
+    padding: 12,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.03)",
+    borderColor: colors.border,
   },
-  iconWrapper: { padding: 14, borderRadius: 50, marginBottom: 12 },
-  cardLabel: {
-    color: Colors.text,
-    fontWeight: "600",
-    fontSize: 14,
-    textAlign: "center",
+  optionSelected: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
   },
-  vocalAction: {
-    flexDirection: "row",
-    backgroundColor: Colors.primary,
+  optionText: { color: colors.text },
+  optionTextSelected: { color: "white" },
+  input: {
+    backgroundColor: "white",
+    borderRadius: 10,
+    padding: 15,
+    borderWidth: 1,
+    borderColor: colors.border,
+    minHeight: 100,
+    textAlignVertical: "top",
+    marginBottom: 25,
+  },
+  submitButton: {
+    backgroundColor: colors.danger,
     padding: 18,
-    borderRadius: 18,
-    justifyContent: "center",
+    borderRadius: 12,
     alignItems: "center",
-    marginTop: 15,
   },
-  vocalText: {
-    color: Colors.background,
-    fontWeight: "800",
-    marginLeft: 8,
-    fontSize: 15,
-  },
+  submitButtonText: { color: "white", fontSize: 18, fontWeight: "bold" },
 });

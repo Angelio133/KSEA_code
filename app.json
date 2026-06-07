@@ -1,13 +1,16 @@
 {
   "expo": {
-    "name": "MitandrinaAI",
-    "slug": "MitandrinaAI",
+    "name": "Mitandrina-AI",
+    "slug": "Mitandrina-AI",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "L'application a besoin de votre position pour vous alerter des zones d'accidents à Madagascar."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -15,10 +18,12 @@
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
-      }
+      },
+      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"]
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": ["expo-sqlite"]
   }
 }
