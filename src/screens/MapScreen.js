@@ -15,6 +15,9 @@ import {
 import { WebView } from "react-native-webview";
 import { useTranslation } from "react-i18next";
 
+import { COLORS } from "../theme/Theme";
+import { BLACK_SPOTS } from "../constants/BlackSpots";
+
 const ANALAKELY = {
   latitude: -18.913688,
   longitude: 47.536392,
@@ -50,6 +53,8 @@ export default function MapScreen({
   destinationCoords,
   blackSpots,
   onRouteInfoChange,
+  onOpenCopilot,
+  onReportDanger,
 }) {
   const { t } = useTranslation();
 
@@ -60,47 +65,30 @@ export default function MapScreen({
   const [routeLoading, setRouteLoading] = useState(false);
   const [routeError, setRouteError] = useState("");
 
+  const spots = useMemo(() => {
+    return blackSpots?.length ? blackSpots : BLACK_SPOTS;
+  }, [blackSpots]);
+
   const initialPositionRef = useRef({
     latitude: userLocation?.latitude || ANALAKELY.latitude,
     longitude: userLocation?.longitude || ANALAKELY.longitude,
   });
 
-  const defaultBlackSpots = useMemo(
-    () => [
-      {
-        id: 1,
-        latitude: -18.905,
-        longitude: 47.525,
-        risk: "high",
-        title: "Zone Accidentogène - RN7",
-        description: "Virage à forte inclinaison",
-      },
-      {
-        id: 2,
-        latitude: -18.92,
-        longitude: 47.54,
-        risk: "moderate",
-        title: "Axe Analakely",
-        description: "Forte concentration de piétons",
-      },
-      {
-        id: 3,
-        latitude: -18.895,
-        longitude: 47.518,
-        risk: "high",
-        title: "Danger à 500 m",
-        description: "Zone de collisions fréquentes sur l’itinéraire",
-      },
-    ],
-    [],
-  );
-
-  const spots = blackSpots || defaultBlackSpots;
-
   const injectJavaScript = useCallback((code) => {
     if (!webViewRef.current) return;
     webViewRef.current.injectJavaScript(`${code}\ntrue;`);
   }, []);
+
+  const recenterMap = useCallback(() => {
+    const lat = userLocation?.latitude || initialPositionRef.current.latitude;
+    const lng = userLocation?.longitude || initialPositionRef.current.longitude;
+
+    injectJavaScript(`
+      if (typeof recenterOnDriver === "function") {
+        recenterOnDriver(${lat}, ${lng});
+      }
+    `);
+  }, [userLocation, injectJavaScript]);
 
   const sendRouteRequestToWebView = useCallback(() => {
     if (!isMapLoaded) return;
@@ -264,7 +252,7 @@ export default function MapScreen({
             height: 100%;
             margin: 0;
             padding: 0;
-            background-color: #F5F7FA;
+            background-color: ${COLORS.background};
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             touch-action: pan-x pan-y;
           }
@@ -274,12 +262,12 @@ export default function MapScreen({
           }
 
           .leaflet-container {
-            background: #F5F7FA;
+            background: ${COLORS.background};
             touch-action: pan-x pan-y;
           }
 
           .leaflet-tile {
-            filter: saturate(1.08) contrast(1.02) brightness(1.02);
+            filter: saturate(1.08) contrast(1.03) brightness(1.02);
           }
 
           .leaflet-control-zoom {
@@ -297,38 +285,38 @@ export default function MapScreen({
             line-height: 42px !important;
             font-size: 24px !important;
             font-weight: 800 !important;
-            color: #1C1C1E !important;
+            color: ${COLORS.text} !important;
             background: rgba(255,255,255,0.96) !important;
             border: none !important;
           }
 
           .leaflet-control-zoom a:hover {
-            background: #F2F2F7 !important;
+            background: ${COLORS.surfaceSoft} !important;
           }
 
           .leaflet-control-zoom-in {
-            border-bottom: 1px solid #E5E5EA !important;
+            border-bottom: 1px solid ${COLORS.border} !important;
           }
 
           .gps-marker {
             width: 22px;
             height: 22px;
-            background-color: #007AFF;
+            background-color: ${COLORS.primary};
             border: 4px solid #FFFFFF;
             border-radius: 50%;
             box-shadow:
-              0 0 0 8px rgba(0, 122, 255, 0.16),
-              0 8px 20px rgba(0, 122, 255, 0.35);
+              0 0 0 8px rgba(11, 143, 85, 0.18),
+              0 8px 20px rgba(11, 143, 85, 0.38);
           }
 
           .destination-marker {
             width: 36px;
             height: 36px;
-            background: linear-gradient(135deg, #5856D6, #7B61FF);
+            background: linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary});
             border: 3px solid #FFFFFF;
             border-radius: 15px 15px 15px 5px;
             transform: rotate(-45deg);
-            box-shadow: 0 10px 24px rgba(88, 86, 214, 0.42);
+            box-shadow: 0 10px 24px rgba(226, 30, 38, 0.36);
           }
 
           .destination-marker::after {
@@ -346,27 +334,27 @@ export default function MapScreen({
             width: 23px;
             height: 23px;
             border-radius: 50%;
-            background: #FF3B30;
+            background: ${COLORS.secondary};
             border: 3px solid #FFFFFF;
             box-shadow:
-              0 0 0 8px rgba(255, 59, 48, 0.15),
-              0 8px 20px rgba(255, 59, 48, 0.28);
+              0 0 0 8px rgba(226, 30, 38, 0.15),
+              0 8px 20px rgba(226, 30, 38, 0.28);
           }
 
           .warning-pulse {
             width: 23px;
             height: 23px;
             border-radius: 50%;
-            background: #FF9500;
+            background: ${COLORS.warning};
             border: 3px solid #FFFFFF;
             box-shadow:
-              0 0 0 8px rgba(255, 149, 0, 0.15),
-              0 8px 20px rgba(255, 149, 0, 0.25);
+              0 0 0 8px rgba(245, 158, 11, 0.15),
+              0 8px 20px rgba(245, 158, 11, 0.25);
           }
 
           .popup-title {
             font-weight: 800;
-            color: #1C1C1E;
+            color: ${COLORS.text};
             margin-bottom: 4px;
           }
 
@@ -377,7 +365,7 @@ export default function MapScreen({
           }
 
           .route-tooltip {
-            background: #1C1C1E;
+            background: ${COLORS.dark2};
             color: #FFFFFF;
             border: none;
             border-radius: 14px;
@@ -459,6 +447,17 @@ export default function MapScreen({
           var destinationMarker = null;
           var lastRouteController = null;
 
+          function recenterOnDriver(lat, lng) {
+            var target = new L.LatLng(lat, lng);
+
+            driverMarker.setLatLng(target);
+
+            map.setView(target, Math.max(map.getZoom(), 16), {
+              animate: true,
+              duration: 0.55,
+            });
+          }
+
           function updateDriverPosition(lat, lng) {
             var newLatLng = new L.LatLng(lat, lng);
             driverMarker.setLatLng(newLatLng);
@@ -525,9 +524,9 @@ export default function MapScreen({
             }).addTo(map);
 
             routeLine = L.polyline(latLngPoints, {
-              color: "#5856D6",
+              color: "${COLORS.primary}",
               weight: 7,
-              opacity: 0.94,
+              opacity: 0.95,
               lineCap: "round",
               lineJoin: "round",
             }).addTo(map);
@@ -689,8 +688,8 @@ export default function MapScreen({
               );
 
             L.circle([spot.latitude, spot.longitude], {
-              color: isHigh ? "#FF3B30" : "#FF9500",
-              fillColor: isHigh ? "#FF3B30" : "#FF9500",
+              color: isHigh ? "${COLORS.secondary}" : "${COLORS.warning}",
+              fillColor: isHigh ? "${COLORS.secondary}" : "${COLORS.warning}",
               fillOpacity: isHigh ? 0.16 : 0.13,
               radius: isHigh ? 150 : 120,
               weight: 2,
@@ -723,6 +722,14 @@ export default function MapScreen({
         }}
       />
 
+      <TouchableOpacity
+        style={styles.recenterButton}
+        activeOpacity={0.85}
+        onPress={recenterMap}
+      >
+        <Text style={styles.recenterIcon}>⌖</Text>
+      </TouchableOpacity>
+
       {!isRouteActive && (
         <View style={styles.mapReadyBadge}>
           <View style={styles.mapReadyDot} />
@@ -736,13 +743,23 @@ export default function MapScreen({
       )}
 
       {isRouteActive && (
-        <View style={styles.bottomOverlay}>
-          <View style={styles.speedCard}>
-            <Text style={styles.speedLabel}>VITESSE</Text>
-            <Text style={styles.speedValue}>
-              {speed && speed > 0 ? Math.round(speed) : 0}
-              <Text style={styles.speedUnit}> km/h</Text>
-            </Text>
+        <View style={styles.navigationControls}>
+          <View style={styles.navigationTopRow}>
+            <View style={styles.speedCard}>
+              <Text style={styles.speedLabel}>VITESSE</Text>
+              <Text style={styles.speedValue}>
+                {speed && speed > 0 ? Math.round(speed) : 0}
+                <Text style={styles.speedUnit}> km/h</Text>
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              style={styles.reportFab}
+              activeOpacity={0.85}
+              onPress={onReportDanger}
+            >
+              <Text style={styles.reportFabIcon}>⚠️</Text>
+            </TouchableOpacity>
           </View>
 
           {routeLoading && (
@@ -762,31 +779,19 @@ export default function MapScreen({
             </View>
           ) : null}
 
-          <View style={styles.actionRow}>
-            <TouchableOpacity
-              style={[styles.actionButton, styles.reportButton]}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.buttonIcon}>⚠️</Text>
-              <View>
-                <Text style={styles.buttonText}>
-                  {t("report") || "Signaler"}
-                </Text>
-                <Text style={styles.buttonSubText}>Danger proche</Text>
-              </View>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.actionButton, styles.driveButton]}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.buttonIcon}>🧠</Text>
-              <View>
-                <Text style={styles.buttonText}>Copilot IA</Text>
-                <Text style={styles.buttonSubText}>Prévention active</Text>
-              </View>
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity
+            style={styles.copilotPill}
+            activeOpacity={0.88}
+            onPress={onOpenCopilot}
+          >
+            <Text style={styles.copilotPillIcon}>🧠</Text>
+            <View style={styles.copilotTextBox}>
+              <Text style={styles.copilotPillTitle}>Copilot IA actif</Text>
+              <Text style={styles.copilotPillSub}>
+                Prévention en temps réel
+              </Text>
+            </View>
+          </TouchableOpacity>
         </View>
       )}
 
@@ -818,13 +823,39 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
   },
 
+  recenterButton: {
+    position: "absolute",
+    top: 116,
+    right: 16,
+    zIndex: 30,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "rgba(255,255,255,0.96)",
+    justifyContent: "center",
+    alignItems: "center",
+    shadowColor: COLORS.dark3,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.18,
+    shadowRadius: 18,
+    elevation: 10,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.75)",
+  },
+  recenterIcon: {
+    color: COLORS.primary,
+    fontSize: 27,
+    fontWeight: "900",
+    marginTop: -1,
+  },
+
   mapReadyBadge: {
     position: "absolute",
     top: 58,
     left: 16,
     right: 82,
     zIndex: 10,
-    backgroundColor: "rgba(28, 28, 30, 0.88)",
+    backgroundColor: "rgba(31, 36, 48, 0.9)",
     borderRadius: 20,
     paddingVertical: 12,
     paddingHorizontal: 14,
@@ -835,7 +866,7 @@ const styles = StyleSheet.create({
     width: 11,
     height: 11,
     borderRadius: 6,
-    backgroundColor: "#34C759",
+    backgroundColor: COLORS.primary,
     marginRight: 12,
   },
   mapReadyTitle: {
@@ -850,22 +881,32 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
-  bottomOverlay: {
+  navigationControls: {
     position: "absolute",
-    bottom: 104,
+    bottom: 106,
     left: 16,
     right: 16,
-    zIndex: 10,
+    zIndex: 20,
   },
+  navigationTopRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-end",
+    marginBottom: 12,
+  },
+
   speedCard: {
-    backgroundColor: "#1C1C1E",
-    borderRadius: 18,
-    paddingVertical: 11,
-    paddingHorizontal: 14,
-    alignSelf: "flex-start",
-    marginBottom: 14,
-    minWidth: 104,
+    backgroundColor: COLORS.roadDark,
+    borderRadius: 20,
+    paddingVertical: 12,
+    paddingHorizontal: 15,
+    minWidth: 112,
     alignItems: "center",
+    shadowColor: COLORS.dark3,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.2,
+    shadowRadius: 18,
+    elevation: 10,
   },
   speedLabel: {
     color: "#AEAEB2",
@@ -874,8 +915,8 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
   },
   speedValue: {
-    color: "#34C759",
-    fontSize: 26,
+    color: COLORS.primary,
+    fontSize: 27,
     fontWeight: "900",
     marginTop: 2,
   },
@@ -885,15 +926,70 @@ const styles = StyleSheet.create({
     fontWeight: "500",
   },
 
+  reportFab: {
+    width: 62,
+    height: 62,
+    borderRadius: 31,
+    backgroundColor: COLORS.secondary,
+    justifyContent: "center",
+    alignItems: "center",
+    shadowColor: COLORS.secondary,
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.35,
+    shadowRadius: 20,
+    elevation: 14,
+    borderWidth: 3,
+    borderColor: "rgba(255,255,255,0.82)",
+  },
+  reportFabIcon: {
+    fontSize: 28,
+  },
+
+  copilotPill: {
+    alignSelf: "center",
+    backgroundColor: "rgba(31,36,48,0.94)",
+    borderRadius: 999,
+    paddingVertical: 10,
+    paddingLeft: 12,
+    paddingRight: 18,
+    flexDirection: "row",
+    alignItems: "center",
+    shadowColor: COLORS.dark3,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.18,
+    shadowRadius: 18,
+    elevation: 10,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+  },
+  copilotPillIcon: {
+    fontSize: 22,
+    marginRight: 9,
+  },
+  copilotTextBox: {
+    justifyContent: "center",
+  },
+  copilotPillTitle: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  copilotPillSub: {
+    color: "rgba(255,255,255,0.58)",
+    fontSize: 10,
+    fontWeight: "700",
+    marginTop: 1,
+  },
+
   routeStatusBadge: {
-    alignSelf: "flex-start",
-    backgroundColor: "rgba(28, 28, 30, 0.88)",
+    alignSelf: "center",
+    backgroundColor: "rgba(31, 36, 48, 0.92)",
     borderRadius: 999,
     paddingVertical: 9,
     paddingHorizontal: 14,
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 12,
+    marginBottom: 10,
   },
   routeStatusText: {
     color: "#FFFFFF",
@@ -901,11 +997,12 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   routeErrorBadge: {
-    backgroundColor: "rgba(255, 59, 48, 0.92)",
+    alignSelf: "center",
+    backgroundColor: "rgba(226, 30, 38, 0.94)",
     borderRadius: 14,
     paddingVertical: 9,
     paddingHorizontal: 14,
-    marginBottom: 12,
+    marginBottom: 10,
   },
   routeErrorText: {
     color: "#FFFFFF",
@@ -913,45 +1010,11 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
 
-  actionRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-  },
-  actionButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    borderRadius: 20,
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    flex: 0.485,
-  },
-  reportButton: {
-    backgroundColor: "#FF3B30",
-  },
-  driveButton: {
-    backgroundColor: "#5856D6",
-  },
-  buttonIcon: {
-    fontSize: 22,
-    marginRight: 10,
-  },
-  buttonText: {
-    color: "#FFFFFF",
-    fontSize: 14,
-    fontWeight: "900",
-  },
-  buttonSubText: {
-    color: "rgba(255,255,255,0.72)",
-    fontSize: 11,
-    fontWeight: "600",
-    marginTop: 2,
-  },
-
   loaderBadge: {
     position: "absolute",
     top: 108,
     alignSelf: "center",
-    backgroundColor: "rgba(28, 28, 30, 0.88)",
+    backgroundColor: "rgba(31, 36, 48, 0.9)",
     paddingVertical: 9,
     paddingHorizontal: 16,
     borderRadius: 999,
@@ -968,7 +1031,7 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 108,
     alignSelf: "center",
-    backgroundColor: "rgba(255, 59, 48, 0.92)",
+    backgroundColor: "rgba(226, 30, 38, 0.92)",
     paddingVertical: 9,
     paddingHorizontal: 16,
     borderRadius: 999,

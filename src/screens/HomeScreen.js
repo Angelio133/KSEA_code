@@ -1,20 +1,81 @@
-import React from "react";
+import React, { useRef, useEffect } from "react";
 import {
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
   SafeAreaView,
-  Alert,
+  Animated,
+  ActivityIndicator,
+  Platform,
+  Easing,
 } from "react-native";
 import MapView, { UrlTile } from "react-native-maps";
 import { useNavigation } from "@react-navigation/native";
 import useLocation from "../hooks/useLocation";
 import { colors } from "../theme/Theme";
+import { BlurView } from "expo-blur";
 
 export default function HomeScreen() {
   const navigation = useNavigation();
   const { location, speed, error, loading } = useLocation();
+
+  const pulseAnim = useRef(new Animated.Value(0)).current;
+  const scaleStartButton = useRef(new Animated.Value(1)).current;
+  const scaleReportButton = useRef(new Animated.Value(1)).current;
+  const speedAnim = useRef(new Animated.Value(0)).current;
+
+  const currentSpeed = loading ? "..." : Math.round(speed || 0);
+
+  // GPS Badge Pulse
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 1000,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 0,
+          duration: 1000,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ]),
+    ).start();
+  }, []);
+
+  // Speed Value Animation
+  useEffect(() => {
+    Animated.timing(speedAnim, {
+      toValue: currentSpeed === "..." ? 0 : currentSpeed,
+      duration: 800,
+      easing: Easing.out(Easing.exp),
+      useNativeDriver: false,
+    }).start();
+  }, [currentSpeed]);
+
+  const handlePressIn = (scaleRef) => {
+    Animated.spring(scaleRef, {
+      toValue: 0.92,
+      useNativeDriver: true,
+    }).start();
+  };
+  const handlePressOut = (scaleRef) => {
+    Animated.spring(scaleRef, {
+      toValue: 1,
+      friction: 4,
+      tension: 50,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const pulseScale = pulseAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 1.35],
+  });
 
   return (
     <SafeAreaView style={styles.container}>
@@ -27,8 +88,9 @@ export default function HomeScreen() {
             latitudeDelta: 0.15,
             longitudeDelta: 0.15,
           }}
-          showsUserLocation={true}
-          showsCompass={true}
+          showsUserLocation
+          showsCompass
+          showsMyLocationButton
           region={
             location
               ? {
@@ -40,82 +102,260 @@ export default function HomeScreen() {
               : undefined
           }
         >
-          {/* OpenStreetMap Tiles */}
           <UrlTile
             urlTemplate="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
             maximumZ={19}
           />
         </MapView>
+
+        {/* GPS Pulse Badge */}
+        <Animated.View
+          style={[styles.gpsBadge, { transform: [{ scale: pulseScale }] }]}
+        >
+          <View style={styles.liveDot} />
+          <Text style={styles.gpsText}>
+            {location ? "GPS actif" : "Recherche GPS"}
+          </Text>
+        </Animated.View>
       </View>
 
-      <View style={styles.infoContainer}>
+      <BlurView intensity={90} tint="light" style={styles.infoContainer}>
+        <View style={styles.grabber} />
+
         <Text style={styles.title}>Mitandrina AI</Text>
         <Text style={styles.subtitle}>Ton copilote intelligent</Text>
 
-        <Text style={styles.speedText}>
-          Vitesse actuelle :
-          <Text style={styles.speedValue}> {loading ? "..." : speed} km/h</Text>
-        </Text>
+        {/* Speed Card */}
+        <View style={styles.speedCard}>
+          <Text style={styles.speedLabel}>VITESSE ACTUELLE</Text>
+          <View style={styles.speedRow}>
+            {loading ? (
+              <ActivityIndicator size="small" color={colors.success} />
+            ) : (
+              <Animated.Text style={styles.speedValue}>
+                {speedAnim
+                  .interpolate({
+                    inputRange: [0, 200],
+                    outputRange: [0, speedAnim._value],
+                    extrapolate: "clamp",
+                  })
+                  .__getValue()}
+              </Animated.Text>
+            )}
+            <Text style={styles.speedUnit}>km/h</Text>
+          </View>
+        </View>
 
-        {error && <Text style={styles.errorText}>⚠️ {error}</Text>}
+        {error && (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>⚠️ {error}</Text>
+          </View>
+        )}
 
-        <TouchableOpacity
-          style={styles.startButton}
-          onPress={() => navigation.navigate("DrivingMode")}
-        >
-          <Text style={styles.startButtonText}>🚗 Démarrer la Conduite</Text>
-        </TouchableOpacity>
+        {/* Start Driving Button */}
+        <Animated.View style={{ transform: [{ scale: scaleStartButton }] }}>
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={() => navigation.navigate("DrivingMode")}
+            onPressIn={() => handlePressIn(scaleStartButton)}
+            onPressOut={() => handlePressOut(scaleStartButton)}
+            style={styles.startButton}
+          >
+            <Text style={styles.startButtonIcon}>🚗</Text>
+            <View style={styles.buttonTextBox}>
+              <Text style={styles.startButtonText}>Démarrer la conduite</Text>
+              <Text style={styles.startButtonSubText}>
+                Navigation et prévention active
+              </Text>
+            </View>
+            <Text style={styles.buttonArrow}>›</Text>
+          </TouchableOpacity>
+        </Animated.View>
 
-        <TouchableOpacity
-          style={styles.reportButton}
-          onPress={() => navigation.navigate("Signaler")}
-        >
-          <Text style={styles.reportButtonText}>⚠️ Signaler un Danger</Text>
-        </TouchableOpacity>
-      </View>
+        {/* Report Button */}
+        <Animated.View style={{ transform: [{ scale: scaleReportButton }] }}>
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={() => navigation.navigate("Signaler")}
+            onPressIn={() => handlePressIn(scaleReportButton)}
+            onPressOut={() => handlePressOut(scaleReportButton)}
+            style={styles.reportButton}
+          >
+            <Text style={styles.reportButtonIcon}>⚠️</Text>
+            <View style={styles.buttonTextBox}>
+              <Text style={styles.reportButtonText}>Signaler un danger</Text>
+              <Text style={styles.reportButtonSubText}>
+                Aider les autres conducteurs
+              </Text>
+            </View>
+            <Text style={styles.buttonArrow}>›</Text>
+          </TouchableOpacity>
+        </Animated.View>
+      </BlurView>
     </SafeAreaView>
   );
 }
 
-// Styles restent les mêmes...
+// Les styles restent similaires mais avec ombre + glass + glow sur boutons
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   mapContainer: { flex: 1 },
   map: { width: "100%", height: "100%" },
-  infoContainer: {
-    padding: 20,
-    backgroundColor: colors.card,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+
+  gpsBadge: {
+    position: "absolute",
+    top: 18,
+    left: 18,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(28,28,30,0.86)",
+    paddingVertical: 9,
+    paddingHorizontal: 13,
+    borderRadius: 999,
   },
+  liveDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: colors.success,
+    marginRight: 8,
+  },
+  gpsText: { color: "#fff", fontWeight: "800", fontSize: 12 },
+
+  infoContainer: {
+    paddingHorizontal: 22,
+    paddingTop: 12,
+    paddingBottom: 22,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    backgroundColor: "rgba(255,255,255,0.92)",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -8 },
+    shadowOpacity: 0.18,
+    shadowRadius: 18,
+    elevation: 14,
+  },
+  grabber: {
+    width: 46,
+    height: 5,
+    borderRadius: 999,
+    backgroundColor: "#D1D1D6",
+    alignSelf: "center",
+    marginBottom: 14,
+  },
+
   title: {
-    fontSize: 28,
-    fontWeight: "bold",
+    fontSize: 30,
+    fontWeight: "900",
     color: colors.primary,
     textAlign: "center",
+    letterSpacing: -0.6,
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: 15,
     color: colors.textLight,
     textAlign: "center",
-    marginBottom: 15,
+    marginBottom: 16,
+    fontWeight: "600",
   },
-  speedText: { fontSize: 18, textAlign: "center", marginVertical: 10 },
-  speedValue: { fontSize: 32, fontWeight: "bold", color: colors.success },
+
+  speedCard: {
+    backgroundColor: "#F8F8FB",
+    borderRadius: 22,
+    paddingVertical: 16,
+    paddingHorizontal: 18,
+    alignItems: "center",
+    marginBottom: 14,
+  },
+  speedLabel: {
+    fontSize: 11,
+    fontWeight: "900",
+    color: colors.textLight,
+    letterSpacing: 1,
+    marginBottom: 6,
+  },
+  speedRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "center",
+    minHeight: 44,
+  },
+  speedValue: {
+    fontSize: 40,
+    fontWeight: "900",
+    color: colors.success,
+    lineHeight: 44,
+  },
+  speedUnit: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: colors.textLight,
+    marginLeft: 6,
+  },
+
+  errorBox: {
+    backgroundColor: "rgba(255,59,48,0.1)",
+    borderRadius: 14,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    marginBottom: 12,
+  },
+  errorText: {
+    color: "#FF3B30",
+    textAlign: "center",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+
   startButton: {
+    flexDirection: "row",
+    alignItems: "center",
     backgroundColor: colors.primary,
-    padding: 18,
-    borderRadius: 12,
-    marginVertical: 10,
-    alignItems: "center",
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    marginBottom: 10,
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.26,
+    shadowRadius: 18,
+    elevation: 10,
   },
-  startButtonText: { color: "white", fontSize: 18, fontWeight: "bold" },
+  startButtonIcon: { fontSize: 26, marginRight: 12 },
   reportButton: {
-    backgroundColor: colors.warning,
-    padding: 15,
-    borderRadius: 12,
+    flexDirection: "row",
     alignItems: "center",
+    backgroundColor: colors.warning,
+    paddingVertical: 15,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    shadowColor: colors.warning,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.22,
+    shadowRadius: 15,
+    elevation: 8,
   },
-  reportButtonText: { color: "white", fontSize: 16, fontWeight: "600" },
-  errorText: { color: "red", textAlign: "center", marginVertical: 8 },
+  reportButtonIcon: { fontSize: 24, marginRight: 12 },
+
+  buttonTextBox: { flex: 1 },
+  startButtonText: { color: "#fff", fontSize: 17, fontWeight: "900" },
+  startButtonSubText: {
+    color: "rgba(255,255,255,0.74)",
+    fontSize: 12,
+    fontWeight: "600",
+    marginTop: 3,
+  },
+  reportButtonText: { color: "#fff", fontSize: 16, fontWeight: "900" },
+  reportButtonSubText: {
+    color: "rgba(255,255,255,0.76)",
+    fontSize: 12,
+    fontWeight: "600",
+    marginTop: 3,
+  },
+  buttonArrow: {
+    fontSize: 34,
+    fontWeight: "300",
+    color: "#fff",
+    marginLeft: 8,
+  },
 });

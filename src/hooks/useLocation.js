@@ -4,17 +4,18 @@ import * as Location from "expo-location";
 export default function useLocation() {
   const [location, setLocation] = useState(null);
   const [speed, setSpeed] = useState(0);
-  const [error, setError] = useState(null);
+  const [gpsError, setGpsError] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let subscription;
 
-    (async () => {
+    const startLocationTracking = async () => {
       try {
         const { status } = await Location.requestForegroundPermissionsAsync();
+
         if (status !== "granted") {
-          setError("Permission de localisation refusée");
+          setGpsError("Permission de localisation refusée");
           setLoading(false);
           return;
         }
@@ -28,23 +29,34 @@ export default function useLocation() {
           (newLocation) => {
             setLocation(newLocation.coords);
 
-            // Calcul de la vitesse en km/h
             const speedInMps = newLocation.coords.speed || 0;
             const speedInKmh = Math.round(speedInMps * 3.6);
+
             setSpeed(speedInKmh);
+            setGpsError(null);
           },
         );
       } catch (err) {
-        setError(err.message);
+        setGpsError(err?.message || "Erreur GPS");
       } finally {
         setLoading(false);
       }
-    })();
+    };
+
+    startLocationTracking();
 
     return () => {
-      if (subscription) subscription.remove();
+      if (subscription) {
+        subscription.remove();
+      }
     };
   }, []);
 
-  return { location, speed, error, loading };
+  return {
+    location,
+    speed,
+    gpsError,
+    error: gpsError,
+    loading,
+  };
 }

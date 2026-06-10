@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -18,37 +18,55 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { I18nextProvider } from "react-i18next";
 import { LinearGradient } from "expo-linear-gradient";
 import { BlurView } from "expo-blur";
+import * as Speech from "expo-speech";
 
 import i18n from "./Src/i18n/i18n";
 import MapScreen from "./Src/screens/MapScreen";
 import useLocation from "./Src/hooks/useLocation";
 
+import { COLORS, GRADIENTS } from "./Src/theme/Theme";
+import { KNOWN_DESTINATIONS } from "./Src/constants/Destinations";
+import { BLACK_SPOTS } from "./Src/constants/BlackSpots";
+
 const { width, height } = Dimensions.get("window");
 
 const APP_LOGO = require("./Src/assets/logo.png");
 
-const KNOWN_DESTINATIONS = {
-  "Aéroport International d'Ivato": {
-    latitude: -18.7996,
-    longitude: 47.4788,
-  },
-  "Aéroport d'Ivato": {
-    latitude: -18.7996,
-    longitude: 47.4788,
-  },
-  "Jardin d'Ambohijatovo": {
-    latitude: -18.9142,
-    longitude: 47.5261,
-  },
-  Analakely: {
-    latitude: -18.9089,
-    longitude: 47.5252,
-  },
-  "INSI Madagascar": {
-    latitude: -18.9078,
-    longitude: 47.5269,
-  },
-};
+const VISUAL_ALERT_DISTANCE_METERS = 500;
+const VOICE_ALERT_DISTANCE_METERS = 200;
+
+function getDistanceMeters(pointA, pointB) {
+  if (!pointA || !pointB) return null;
+
+  const R = 6371000;
+  const lat1 = (pointA.latitude * Math.PI) / 180;
+  const lat2 = (pointB.latitude * Math.PI) / 180;
+  const deltaLat = ((pointB.latitude - pointA.latitude) * Math.PI) / 180;
+  const deltaLng = ((pointB.longitude - pointA.longitude) * Math.PI) / 180;
+
+  const a =
+    Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+    Math.cos(lat1) *
+      Math.cos(lat2) *
+      Math.sin(deltaLng / 2) *
+      Math.sin(deltaLng / 2);
+
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return R * c;
+}
+
+function formatDangerDistance(meters) {
+  if (meters === null || meters === undefined || Number.isNaN(meters)) {
+    return "--";
+  }
+
+  if (meters < 1000) {
+    return `${Math.round(meters)} m`;
+  }
+
+  return `${(meters / 1000).toFixed(1).replace(".", ",")} km`;
+}
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState(1);
@@ -67,6 +85,7 @@ export default function App() {
   const { location: userLocation, speed, gpsError } = useLocation();
 
   const inputRef = useRef(null);
+  const spokenDangerIdsRef = useRef(new Set());
 
   const introOpacity = useRef(new Animated.Value(0)).current;
   const logoScale = useRef(new Animated.Value(0.72)).current;
@@ -77,6 +96,65 @@ export default function App() {
   const particleAnim = useRef(new Animated.Value(0)).current;
   const buttonAnim = useRef(new Animated.Value(0)).current;
   const welcomeAnim = useRef(new Animated.Value(0)).current;
+
+  const dangersWithDistance = useMemo(() => {
+    if (!userLocation) return BLACK_SPOTS;
+
+    return BLACK_SPOTS.map((spot) => ({
+      ...spot,
+      distance: getDistanceMeters(userLocation, spot),
+    })).sort((a, b) => (a.distance || 999999) - (b.distance || 999999));
+  }, [userLocation]);
+
+  const nearestDanger = dangersWithDistance[0] || null;
+
+  const activeDanger =
+    isRouteActive &&
+    nearestDanger?.distance !== undefined &&
+    nearestDanger.distance <= VISUAL_ALERT_DISTANCE_METERS
+      ? nearestDanger
+      : null;
+
+  const voiceDanger =
+    isRouteActive &&
+    nearestDanger?.distance !== undefined &&
+    nearestDanger.distance <= VOICE_ALERT_DISTANCE_METERS
+      ? nearestDanger
+      : null;
+
+  useEffect(() => {
+    if (!isRouteActive) {
+      spokenDangerIdsRef.current.clear();
+      Speech.stop();
+      return;
+    }
+
+    if (!voiceDanger) return;
+
+    const dangerId = String(voiceDanger.id);
+
+    if (spokenDangerIdsRef.current.has(dangerId)) {
+      return;
+    }
+
+    spokenDangerIdsRef.current.add(dangerId);
+
+    const dangerDistance = formatDangerDistance(voiceDanger.distance);
+
+    const message = `Attention. Danger proche à ${dangerDistance}. ${voiceDanger.description} Ralentissez et gardez une distance de sécurité.`;
+
+    Speech.stop();
+    Speech.speak(message, {
+      language: "fr-FR",
+      pitch: 1,
+      rate: 0.92,
+    });
+  }, [
+    isRouteActive,
+    voiceDanger?.id,
+    voiceDanger?.distance,
+    voiceDanger?.description,
+  ]);
 
   useEffect(() => {
     if (currentPage !== 1) return;
@@ -304,7 +382,7 @@ export default function App() {
       headers: {
         Accept: "application/json",
         "Accept-Language": "fr",
-        "User-Agent": "MitandrinaAI/1.0 (hackathon-prototype)",
+        "User-Agent": "MitandrinaAI/1.0 (prototype)",
         Referer: "https://mitandrina-ai.local",
       },
     });
@@ -365,6 +443,9 @@ export default function App() {
   };
 
   const cancelRoute = () => {
+    Speech.stop();
+    spokenDangerIdsRef.current.clear();
+
     setIsRouteActive(false);
     setDestination("");
     setDestinationInput("");
@@ -376,7 +457,14 @@ export default function App() {
   const routeStats = {
     eta: routeInfo?.durationText || (isRouteActive ? "Calcul..." : "--"),
     distance: routeInfo?.distanceText || (isRouteActive ? "Calcul..." : "--"),
-    dangerDistance: "500 m",
+    dangerDistance: activeDanger
+      ? formatDangerDistance(activeDanger.distance)
+      : nearestDanger?.distance
+        ? formatDangerDistance(nearestDanger.distance)
+        : "500 m",
+    voiceDistance: voiceDanger
+      ? formatDangerDistance(voiceDanger.distance)
+      : "200 m",
     from: userLocation ? "Votre position" : "Analakely",
   };
 
@@ -387,7 +475,7 @@ export default function App() {
           {currentPage === 1 && (
             <View style={styles.splashContainer}>
               <LinearGradient
-                colors={["#FFFFFF", "#F1F6FF", "#F7F1FF", "#FFFFFF"]}
+                colors={GRADIENTS.splash}
                 locations={[0, 0.36, 0.74, 1]}
                 style={styles.splashBackground}
               />
@@ -395,24 +483,24 @@ export default function App() {
               <View style={styles.splashEffectsLayer}>
                 <LinearGradient
                   colors={[
-                    "rgba(123,97,255,0.22)",
-                    "rgba(0,122,255,0.06)",
+                    "rgba(11,143,85,0.22)",
+                    "rgba(11,143,85,0.06)",
                     "transparent",
                   ]}
                   style={[styles.auroraBlob, styles.auroraBlobOne]}
                 />
                 <LinearGradient
                   colors={[
-                    "rgba(52,199,89,0.14)",
-                    "rgba(123,97,255,0.04)",
+                    "rgba(226,30,38,0.16)",
+                    "rgba(226,30,38,0.04)",
                     "transparent",
                   ]}
                   style={[styles.auroraBlob, styles.auroraBlobTwo]}
                 />
                 <LinearGradient
                   colors={[
-                    "rgba(255,149,0,0.13)",
-                    "rgba(255,59,48,0.04)",
+                    "rgba(47,53,69,0.16)",
+                    "rgba(47,53,69,0.04)",
                     "transparent",
                   ]}
                   style={[styles.auroraBlob, styles.auroraBlobThree]}
@@ -507,7 +595,7 @@ export default function App() {
                     { transform: [{ rotate: orbitRotate }] },
                   ]}
                 >
-                  <View style={styles.orbitDotBlue} />
+                  <View style={styles.orbitDotGreen} />
                 </Animated.View>
 
                 <Animated.View
@@ -517,7 +605,7 @@ export default function App() {
                     { transform: [{ rotate: reverseOrbitRotate }] },
                   ]}
                 >
-                  <View style={styles.orbitDotOrange} />
+                  <View style={styles.orbitDotRed} />
                 </Animated.View>
 
                 <Animated.View
@@ -527,7 +615,7 @@ export default function App() {
                     { transform: [{ rotate: orbitRotate }] },
                   ]}
                 >
-                  <View style={styles.orbitDotGreen} />
+                  <View style={styles.orbitDotDark} />
                 </Animated.View>
 
                 <Animated.View
@@ -574,7 +662,7 @@ export default function App() {
                   style={styles.launchButtonTouchable}
                 >
                   <LinearGradient
-                    colors={["#8B7CFF", "#5856D6", "#343092"]}
+                    colors={GRADIENTS.primary}
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 1 }}
                     style={styles.launchButton}
@@ -599,13 +687,16 @@ export default function App() {
                     isRouteActive={isRouteActive}
                     destination={destination}
                     destinationCoords={destinationCoords}
+                    blackSpots={BLACK_SPOTS}
                     onRouteInfoChange={setRouteInfo}
+                    onOpenCopilot={() => setActiveTab("copilot")}
+                    onReportDanger={() => setActiveTab("danger_zones")}
                   />
                 )}
 
                 {activeTab === "danger_zones" && (
                   <LinearGradient
-                    colors={["#F8FAFF", "#EEF3FF", "#FFFFFF"]}
+                    colors={[COLORS.background, "#EEF7F2", "#FFFFFF"]}
                     style={styles.premiumScreen}
                   >
                     <SafeAreaView style={styles.safeFull} edges={["top"]}>
@@ -620,47 +711,65 @@ export default function App() {
                         />
 
                         <LinearGradient
-                          colors={["#17172A", "#111827", "#070B16"]}
+                          colors={GRADIENTS.road}
                           start={{ x: 0, y: 0 }}
                           end={{ x: 1, y: 1 }}
                           style={styles.dangerHeroCard}
                         >
                           <View style={styles.dangerHeroGlow} />
                           <View style={styles.heroIconBox}>
-                            <Text style={styles.heroIcon}>⚠️</Text>
+                            <Text style={styles.heroIcon}>
+                              {voiceDanger ? "🔊" : activeDanger ? "⚠️" : "🛡️"}
+                            </Text>
                           </View>
                           <View style={styles.heroTextBox}>
                             <Text style={styles.heroTitle}>
-                              2 dangers prioritaires
+                              {voiceDanger
+                                ? "Intervention vocale du Copilot"
+                                : activeDanger
+                                  ? "Danger proche détecté"
+                                  : "Surveillance active"}
                             </Text>
                             <Text style={styles.heroDesc}>
-                              Prévention activée sur les zones les plus
-                              sensibles du parcours.
+                              {voiceDanger
+                                ? `${voiceDanger.title} est à ${formatDangerDistance(
+                                    voiceDanger.distance,
+                                  )}. Le Copilot intervient vocalement.`
+                                : activeDanger
+                                  ? `${activeDanger.title} est à ${formatDangerDistance(
+                                      activeDanger.distance,
+                                    )}.`
+                                  : "Les zones sensibles sont surveillées autour de votre trajet."}
                             </Text>
                           </View>
                         </LinearGradient>
 
-                        <SignalCard
-                          badgeStyle={styles.dangerBadgeHigh}
-                          badge="Risque élevé"
-                          distance="500 m"
-                          title="🔴 Axe Analakely — Haute densité"
-                          desc="Risque d’accrochage élevé entre 17h et 19h. Forte présence de piétons et véhicules."
-                        />
-                        <SignalCard
-                          badgeStyle={styles.dangerBadgeWarning}
-                          badge="Risque modéré"
-                          distance="1,2 km"
-                          title="🟠 RN7 — Courbe PK 12"
-                          desc="Virage glissant par temps de pluie. Réduction de vitesse recommandée."
-                        />
-                        <SignalCard
-                          badgeStyle={styles.dangerBadgeInfo}
-                          badge="Signalement"
-                          distance="2,4 km"
-                          title="🛑 Obstacle signalé"
-                          desc="Objet sur la chaussée signalé par la communauté. Vérification en attente."
-                        />
+                        {dangersWithDistance.map((danger) => (
+                          <SignalCard
+                            key={danger.id}
+                            badgeStyle={
+                              danger.risk === "high"
+                                ? styles.dangerBadgeHigh
+                                : styles.dangerBadgeWarning
+                            }
+                            badge={
+                              danger.risk === "high"
+                                ? "Risque élevé"
+                                : "Risque modéré"
+                            }
+                            distance={
+                              danger.distance
+                                ? formatDangerDistance(danger.distance)
+                                : "Zone connue"
+                            }
+                            title={
+                              danger.risk === "high"
+                                ? `🔴 ${danger.title}`
+                                : `🟠 ${danger.title}`
+                            }
+                            desc={danger.description}
+                          />
+                        ))}
                       </ScrollView>
                     </SafeAreaView>
                   </LinearGradient>
@@ -668,7 +777,7 @@ export default function App() {
 
                 {activeTab === "copilot" && (
                   <LinearGradient
-                    colors={["#F8FAFF", "#EEF3FF", "#FFFFFF"]}
+                    colors={[COLORS.background, "#EEF7F2", "#FFFFFF"]}
                     style={styles.premiumScreen}
                   >
                     <SafeAreaView style={styles.safeFull} edges={["top"]}>
@@ -679,14 +788,14 @@ export default function App() {
                         <PremiumHeader
                           kicker="ASSISTANT INTELLIGENT"
                           title="Copilot IA"
-                          subtitle="Prévention, guidage et analyse temps réel des dangers sur votre route."
+                          subtitle="Prévention visuelle à 500 m et intervention vocale à 200 m."
                         />
 
                         <LinearGradient
                           colors={
-                            isRouteActive
-                              ? ["#381414", "#7C2222", "#FF3B30"]
-                              : ["#101828", "#17172A", "#28265C"]
+                            voiceDanger || activeDanger
+                              ? GRADIENTS.copilotAlert
+                              : GRADIENTS.copilotIdle
                           }
                           start={{ x: 0, y: 0 }}
                           end={{ x: 1, y: 1 }}
@@ -695,19 +804,31 @@ export default function App() {
                           <View style={styles.copilotOrb} />
                           <View style={styles.heroIconBox}>
                             <Text style={styles.heroIcon}>
-                              {isRouteActive ? "⚠️" : "🧠"}
+                              {voiceDanger ? "🔊" : activeDanger ? "🚨" : "🧠"}
                             </Text>
                           </View>
                           <View style={styles.heroTextBox}>
                             <Text style={styles.heroTitle}>
-                              {isRouteActive
-                                ? "Danger détecté à 500 mètres"
-                                : "Copilot en veille active"}
+                              {voiceDanger
+                                ? `Alerte vocale à ${formatDangerDistance(
+                                    voiceDanger.distance,
+                                  )}`
+                                : activeDanger
+                                  ? `Prévention à ${formatDangerDistance(
+                                      activeDanger.distance,
+                                    )}`
+                                  : isRouteActive
+                                    ? "Copilot IA actif"
+                                    : "Copilot en veille active"}
                             </Text>
                             <Text style={styles.heroDesc}>
-                              {isRouteActive
-                                ? "Ralentissez. Une zone de collisions fréquentes est signalée devant vous."
-                                : "Choisissez une destination pour lancer l’analyse prédictive."}
+                              {voiceDanger
+                                ? `${voiceDanger.description} Le Copilot vous demande de ralentir.`
+                                : activeDanger
+                                  ? `${activeDanger.description} Préparez-vous à ralentir.`
+                                  : isRouteActive
+                                    ? "Votre trajet est suivi. La voix se déclenche automatiquement à 200 m d’un danger."
+                                    : "Choisissez une destination pour lancer l’analyse prédictive."}
                             </Text>
                           </View>
                         </LinearGradient>
@@ -726,21 +847,52 @@ export default function App() {
                               label="Distance"
                               value={routeStats.distance}
                             />
+                            <MetricRow
+                              label="Prévention visuelle"
+                              value="500 m"
+                            />
+                            <MetricRow
+                              label="Intervention vocale"
+                              value={routeStats.voiceDistance}
+                            />
 
                             <LinearGradient
-                              colors={[
-                                "rgba(52,199,89,0.18)",
-                                "rgba(52,199,89,0.07)",
-                              ]}
+                              colors={
+                                voiceDanger || activeDanger
+                                  ? [
+                                      "rgba(226,30,38,0.16)",
+                                      "rgba(226,30,38,0.06)",
+                                    ]
+                                  : [
+                                      "rgba(11,143,85,0.18)",
+                                      "rgba(11,143,85,0.07)",
+                                    ]
+                              }
                               style={styles.recommendationCard}
                             >
-                              <Text style={styles.recommendationTitle}>
+                              <Text
+                                style={[
+                                  styles.recommendationTitle,
+                                  (voiceDanger || activeDanger) && {
+                                    color: COLORS.secondaryDark,
+                                  },
+                                ]}
+                              >
                                 Recommandation IA
                               </Text>
-                              <Text style={styles.recommendationText}>
-                                Maintenez une vitesse stable, augmentez la
-                                distance de sécurité et préparez-vous à
-                                ralentir.
+                              <Text
+                                style={[
+                                  styles.recommendationText,
+                                  (voiceDanger || activeDanger) && {
+                                    color: COLORS.secondaryDark,
+                                  },
+                                ]}
+                              >
+                                {voiceDanger
+                                  ? "Alerte vocale déclenchée. Ralentissez immédiatement, gardez une distance de sécurité et surveillez les piétons, véhicules et obstacles."
+                                  : activeDanger
+                                    ? "Danger détecté dans la zone de prévention. Réduisez progressivement la vitesse."
+                                    : "Maintenez une vitesse stable, gardez une bonne distance de sécurité et restez attentif aux alertes."}
                               </Text>
                             </LinearGradient>
                           </View>
@@ -772,15 +924,12 @@ export default function App() {
                     style={styles.destinationGlassCard}
                   >
                     <LinearGradient
-                      colors={[
-                        "rgba(255,255,255,0.94)",
-                        "rgba(255,255,255,0.78)",
-                      ]}
+                      colors={GRADIENTS.cardLight}
                       style={styles.destinationGlassInner}
                     >
                       <View style={styles.panelFloatingIcon}>
                         <LinearGradient
-                          colors={["#8B7CFF", "#5856D6"]}
+                          colors={GRADIENTS.primary}
                           style={styles.panelFloatingIconGradient}
                         >
                           <Text style={styles.panelFloatingIconText}>⌖</Text>
@@ -802,7 +951,7 @@ export default function App() {
                         activeOpacity={0.9}
                       >
                         <LinearGradient
-                          colors={["#101828", "#1D2140"]}
+                          colors={GRADIENTS.road}
                           start={{ x: 0, y: 0 }}
                           end={{ x: 1, y: 1 }}
                           style={styles.destinationMainButtonGradient}
@@ -860,8 +1009,8 @@ export default function App() {
                         </View>
                         <View style={styles.panelStatDivider} />
                         <View style={styles.panelStatItem}>
-                          <Text style={styles.panelStatLabel}>Copilot</Text>
-                          <Text style={styles.panelStatValue}>IA</Text>
+                          <Text style={styles.panelStatLabel}>Voix IA</Text>
+                          <Text style={styles.panelStatValue}>200 m</Text>
                         </View>
                       </View>
                     </LinearGradient>
@@ -1074,21 +1223,47 @@ export default function App() {
                     style={styles.summaryGlass}
                   >
                     <LinearGradient
-                      colors={["rgba(17,24,39,0.96)", "rgba(28,28,46,0.92)"]}
+                      colors={
+                        voiceDanger || activeDanger
+                          ? ["rgba(226,30,38,0.96)", "rgba(31,36,48,0.94)"]
+                          : ["rgba(31,36,48,0.96)", "rgba(17,24,39,0.94)"]
+                      }
                       style={styles.summaryBox}
                     >
                       <View style={styles.summaryHeader}>
                         <View style={styles.summaryTitleBox}>
                           <Text style={styles.summaryOverline}>
-                            ITINÉRAIRE ACTIF
+                            {voiceDanger
+                              ? "ALERTE VOCALE IA"
+                              : activeDanger
+                                ? "ALERTE DANGER"
+                                : "ITINÉRAIRE ACTIF"}
                           </Text>
                           <Text style={styles.summaryTitle} numberOfLines={1}>
                             {routeStats.from} → {destination}
                           </Text>
                         </View>
 
-                        <View style={styles.liveBadge}>
-                          <Text style={styles.liveBadgeText}>LIVE</Text>
+                        <View
+                          style={[
+                            styles.liveBadge,
+                            (voiceDanger || activeDanger) &&
+                              styles.liveBadgeAlert,
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.liveBadgeText,
+                              (voiceDanger || activeDanger) &&
+                                styles.liveBadgeTextAlert,
+                            ]}
+                          >
+                            {voiceDanger
+                              ? "200 M"
+                              : activeDanger
+                                ? "500 M"
+                                : "LIVE"}
+                          </Text>
                         </View>
                       </View>
 
@@ -1100,7 +1275,11 @@ export default function App() {
                         />
                         <SummaryMetric
                           label="Alerte"
-                          value={routeStats.dangerDistance}
+                          value={
+                            voiceDanger
+                              ? routeStats.voiceDistance
+                              : routeStats.dangerDistance
+                          }
                         />
 
                         <TouchableOpacity
@@ -1248,12 +1427,12 @@ function TabButton({ active, icon, label, onPress }) {
 const styles = StyleSheet.create({
   globalContainer: {
     flex: 1,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: COLORS.surface,
   },
 
   splashContainer: {
     flex: 1,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: COLORS.surface,
     justifyContent: "center",
     alignItems: "center",
     overflow: "hidden",
@@ -1290,7 +1469,7 @@ const styles = StyleSheet.create({
     position: "absolute",
     width: width * 1.55,
     height: 2,
-    backgroundColor: "rgba(88,86,214,0.06)",
+    backgroundColor: "rgba(11,143,85,0.07)",
     transform: [{ rotate: "-32deg" }],
   },
   depthLineOne: {
@@ -1300,24 +1479,24 @@ const styles = StyleSheet.create({
   depthLineTwo: {
     top: height * 0.36,
     left: -160,
-    backgroundColor: "rgba(0,122,255,0.065)",
+    backgroundColor: "rgba(226,30,38,0.055)",
   },
   depthLineThree: {
     bottom: height * 0.24,
     left: -140,
-    backgroundColor: "rgba(88,86,214,0.055)",
+    backgroundColor: "rgba(47,53,69,0.055)",
   },
   depthLineFour: {
     bottom: height * 0.1,
     left: -90,
-    backgroundColor: "rgba(52,199,89,0.052)",
+    backgroundColor: "rgba(11,143,85,0.052)",
   },
   radarCircle: {
     position: "absolute",
     alignSelf: "center",
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: "rgba(88,86,214,0.07)",
+    borderColor: "rgba(11,143,85,0.09)",
   },
   radarCircleOne: {
     width: 340,
@@ -1339,8 +1518,8 @@ const styles = StyleSheet.create({
     width: 7,
     height: 7,
     borderRadius: 4,
-    backgroundColor: "#7B61FF",
-    shadowColor: "#7B61FF",
+    backgroundColor: COLORS.primary,
+    shadowColor: COLORS.primary,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.85,
     shadowRadius: 10,
@@ -1353,31 +1532,31 @@ const styles = StyleSheet.create({
   particleTwo: {
     top: height * 0.32,
     right: width * 0.17,
-    backgroundColor: "#34C759",
-    shadowColor: "#34C759",
+    backgroundColor: COLORS.secondary,
+    shadowColor: COLORS.secondary,
   },
   particleThree: {
     bottom: height * 0.27,
     right: width * 0.22,
-    backgroundColor: "#FF9500",
-    shadowColor: "#FF9500",
+    backgroundColor: COLORS.dark,
+    shadowColor: COLORS.dark,
   },
   particleFour: {
     bottom: height * 0.18,
     left: width * 0.24,
-    backgroundColor: "#007AFF",
-    shadowColor: "#007AFF",
+    backgroundColor: COLORS.primary,
+    shadowColor: COLORS.primary,
   },
   welcomeText: {
     position: "absolute",
     top: height * 0.09,
-    color: "#4C3FB4",
+    color: COLORS.primaryDark,
     fontSize: 44,
     fontWeight: "800",
     fontStyle: "italic",
     fontFamily: Platform.OS === "ios" ? "Georgia" : "serif",
     letterSpacing: 1.2,
-    textShadowColor: "rgba(123,97,255,0.20)",
+    textShadowColor: "rgba(11,143,85,0.18)",
     textShadowOffset: { width: 0, height: 7 },
     textShadowRadius: 14,
   },
@@ -1386,7 +1565,7 @@ const styles = StyleSheet.create({
     width: 470,
     height: 470,
     borderRadius: 235,
-    backgroundColor: "rgba(123,97,255,0.16)",
+    backgroundColor: "rgba(11,143,85,0.14)",
   },
   logoStage: {
     width: 405,
@@ -1403,53 +1582,53 @@ const styles = StyleSheet.create({
   orbitRingLarge: {
     width: 380,
     height: 380,
-    borderColor: "rgba(123,97,255,0.20)",
+    borderColor: "rgba(11,143,85,0.22)",
   },
   orbitRingMedium: {
     width: 315,
     height: 315,
-    borderColor: "rgba(0,122,255,0.18)",
+    borderColor: "rgba(226,30,38,0.18)",
   },
   orbitRingSmall: {
     width: 250,
     height: 250,
-    borderColor: "rgba(52,199,89,0.18)",
+    borderColor: "rgba(47,53,69,0.18)",
   },
-  orbitDotBlue: {
+  orbitDotGreen: {
     position: "absolute",
     top: 32,
     left: 78,
     width: 13,
     height: 13,
     borderRadius: 7,
-    backgroundColor: "#7B61FF",
-    shadowColor: "#7B61FF",
+    backgroundColor: COLORS.primary,
+    shadowColor: COLORS.primary,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 1,
     shadowRadius: 12,
   },
-  orbitDotOrange: {
+  orbitDotRed: {
     position: "absolute",
     top: 80,
     right: 42,
     width: 11,
     height: 11,
     borderRadius: 6,
-    backgroundColor: "#FF9500",
-    shadowColor: "#FF9500",
+    backgroundColor: COLORS.secondary,
+    shadowColor: COLORS.secondary,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 1,
     shadowRadius: 12,
   },
-  orbitDotGreen: {
+  orbitDotDark: {
     position: "absolute",
     bottom: 32,
     left: 82,
     width: 11,
     height: 11,
     borderRadius: 6,
-    backgroundColor: "#34C759",
-    shadowColor: "#34C759",
+    backgroundColor: COLORS.dark,
+    shadowColor: COLORS.dark,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 1,
     shadowRadius: 12,
@@ -1460,15 +1639,15 @@ const styles = StyleSheet.create({
     height: 275,
     borderRadius: 138,
     borderWidth: 2,
-    borderColor: "rgba(123,97,255,0.18)",
+    borderColor: "rgba(11,143,85,0.18)",
   },
   logoShadowDisc: {
     position: "absolute",
     width: 288,
     height: 288,
     borderRadius: 144,
-    backgroundColor: "rgba(123,97,255,0.09)",
-    shadowColor: "#7B61FF",
+    backgroundColor: "rgba(11,143,85,0.08)",
+    shadowColor: COLORS.primary,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.28,
     shadowRadius: 30,
@@ -1481,7 +1660,7 @@ const styles = StyleSheet.create({
     borderRadius: 129,
     backgroundColor: "rgba(255,255,255,0.48)",
     borderWidth: 1,
-    borderColor: "rgba(123,97,255,0.12)",
+    borderColor: "rgba(11,143,85,0.12)",
   },
   logoOnlyFrame: {
     width: 280,
@@ -1499,7 +1678,7 @@ const styles = StyleSheet.create({
     position: "absolute",
     width: 280,
     height: 48,
-    backgroundColor: "rgba(255,255,255,0.32)",
+    backgroundColor: "rgba(255,255,255,0.34)",
   },
   launchButtonWrapper: {
     position: "absolute",
@@ -1516,9 +1695,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: 28,
-    shadowColor: "#7B61FF",
+    shadowColor: COLORS.secondary,
     shadowOffset: { width: 0, height: 18 },
-    shadowOpacity: 0.38,
+    shadowOpacity: 0.3,
     shadowRadius: 26,
     elevation: 16,
     overflow: "hidden",
@@ -1528,18 +1707,18 @@ const styles = StyleSheet.create({
     width: 160,
     height: 160,
     borderRadius: 80,
-    backgroundColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "rgba(255,255,255,0.16)",
     top: -82,
     left: -22,
   },
   launchButtonText: {
-    color: "#FFFFFF",
+    color: COLORS.textLight,
     fontSize: 19,
     fontWeight: "900",
     marginRight: 11,
   },
   launchArrow: {
-    color: "#FFFFFF",
+    color: COLORS.textLight,
     fontSize: 25,
     fontWeight: "900",
     marginTop: -1,
@@ -1547,7 +1726,7 @@ const styles = StyleSheet.create({
 
   mainContainer: {
     flex: 1,
-    backgroundColor: "#F2F2F7",
+    backgroundColor: COLORS.background,
   },
   contentArea: {
     flex: 1,
@@ -1567,7 +1746,7 @@ const styles = StyleSheet.create({
     marginBottom: 18,
   },
   sectionKicker: {
-    color: "#5856D6",
+    color: COLORS.primary,
     fontSize: 12,
     fontWeight: "900",
     letterSpacing: 1.1,
@@ -1576,11 +1755,11 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 31,
     fontWeight: "900",
-    color: "#111827",
+    color: COLORS.text,
     letterSpacing: -0.9,
   },
   sectionSubtitle: {
-    color: "#6B7280",
+    color: COLORS.textMuted,
     fontSize: 14,
     lineHeight: 21,
     marginTop: 8,
@@ -1593,7 +1772,7 @@ const styles = StyleSheet.create({
     padding: 20,
     marginBottom: 18,
     overflow: "hidden",
-    shadowColor: "#111827",
+    shadowColor: COLORS.dark3,
     shadowOffset: { width: 0, height: 18 },
     shadowOpacity: 0.22,
     shadowRadius: 26,
@@ -1606,7 +1785,7 @@ const styles = StyleSheet.create({
     padding: 20,
     marginBottom: 18,
     overflow: "hidden",
-    shadowColor: "#111827",
+    shadowColor: COLORS.dark3,
     shadowOffset: { width: 0, height: 18 },
     shadowOpacity: 0.22,
     shadowRadius: 26,
@@ -1617,7 +1796,7 @@ const styles = StyleSheet.create({
     width: 180,
     height: 180,
     borderRadius: 90,
-    backgroundColor: "rgba(255,149,0,0.22)",
+    backgroundColor: "rgba(226,30,38,0.24)",
     right: -70,
     top: -70,
   },
@@ -1646,12 +1825,12 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   heroTitle: {
-    color: "#FFFFFF",
+    color: COLORS.textLight,
     fontSize: 18,
     fontWeight: "900",
   },
   heroDesc: {
-    color: "rgba(255,255,255,0.7)",
+    color: "rgba(255,255,255,0.72)",
     fontSize: 13,
     lineHeight: 18,
     marginTop: 5,
@@ -1664,7 +1843,7 @@ const styles = StyleSheet.create({
     marginBottom: 14,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.88)",
-    shadowColor: "#111827",
+    shadowColor: COLORS.dark3,
     shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.08,
     shadowRadius: 18,
@@ -1677,8 +1856,8 @@ const styles = StyleSheet.create({
     marginBottom: 11,
   },
   dangerBadgeHigh: {
-    backgroundColor: "rgba(255,59,48,0.12)",
-    color: "#FF3B30",
+    backgroundColor: "rgba(226,30,38,0.12)",
+    color: COLORS.secondary,
     paddingVertical: 6,
     paddingHorizontal: 11,
     borderRadius: 999,
@@ -1686,17 +1865,8 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   dangerBadgeWarning: {
-    backgroundColor: "rgba(255,149,0,0.14)",
-    color: "#FF9500",
-    paddingVertical: 6,
-    paddingHorizontal: 11,
-    borderRadius: 999,
-    fontSize: 11,
-    fontWeight: "900",
-  },
-  dangerBadgeInfo: {
-    backgroundColor: "rgba(0,122,255,0.12)",
-    color: "#007AFF",
+    backgroundColor: "rgba(245,158,11,0.14)",
+    color: COLORS.warning,
     paddingVertical: 6,
     paddingHorizontal: 11,
     borderRadius: 999,
@@ -1704,17 +1874,17 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   dangerDistance: {
-    color: "#8E8E93",
+    color: COLORS.textMuted,
     fontSize: 12,
     fontWeight: "900",
   },
   signalTitle: {
     fontSize: 17,
     fontWeight: "900",
-    color: "#111827",
+    color: COLORS.text,
   },
   signalDesc: {
-    color: "#6B7280",
+    color: COLORS.textMuted,
     fontSize: 14,
     lineHeight: 20,
     marginTop: 7,
@@ -1726,7 +1896,7 @@ const styles = StyleSheet.create({
     padding: 18,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.9)",
-    shadowColor: "#111827",
+    shadowColor: COLORS.dark3,
     shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.08,
     shadowRadius: 18,
@@ -1740,12 +1910,12 @@ const styles = StyleSheet.create({
     borderBottomColor: "#EEF0F4",
   },
   aiMetricLabel: {
-    color: "#8E8E93",
+    color: COLORS.textMuted,
     fontSize: 13,
     fontWeight: "900",
   },
   aiMetricValue: {
-    color: "#111827",
+    color: COLORS.text,
     fontSize: 14,
     fontWeight: "900",
     maxWidth: width * 0.48,
@@ -1757,13 +1927,13 @@ const styles = StyleSheet.create({
     marginTop: 16,
   },
   recommendationTitle: {
-    color: "#2E7D32",
+    color: COLORS.primaryDark,
     fontSize: 15,
     fontWeight: "900",
     marginBottom: 6,
   },
   recommendationText: {
-    color: "#2E7D32",
+    color: COLORS.primaryDark,
     fontSize: 13,
     lineHeight: 19,
     fontWeight: "700",
@@ -1781,12 +1951,12 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   emptyStateTitle: {
-    color: "#111827",
+    color: COLORS.text,
     fontSize: 18,
     fontWeight: "900",
   },
   emptyStateText: {
-    color: "#6B7280",
+    color: COLORS.textMuted,
     textAlign: "center",
     marginTop: 8,
     lineHeight: 20,
@@ -1799,6 +1969,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     zIndex: 99,
     paddingHorizontal: 18,
+    transform: [{ translateY: 35 }],
   },
   destinationGlassCard: {
     width: "100%",
@@ -1807,7 +1978,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.75)",
-    shadowColor: "#111827",
+    shadowColor: COLORS.dark3,
     shadowOffset: { width: 0, height: 22 },
     shadowOpacity: 0.22,
     shadowRadius: 32,
@@ -1821,9 +1992,9 @@ const styles = StyleSheet.create({
     height: 62,
     borderRadius: 24,
     marginBottom: 15,
-    shadowColor: "#5856D6",
+    shadowColor: COLORS.secondary,
     shadowOffset: { width: 0, height: 14 },
-    shadowOpacity: 0.35,
+    shadowOpacity: 0.3,
     shadowRadius: 20,
     elevation: 10,
   },
@@ -1834,19 +2005,19 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   panelFloatingIconText: {
-    color: "#FFFFFF",
+    color: COLORS.textLight,
     fontSize: 30,
     fontWeight: "900",
   },
   destinationPanelTitle: {
     fontSize: 26,
     fontWeight: "900",
-    color: "#111827",
+    color: COLORS.text,
     letterSpacing: -0.8,
   },
   destinationPanelText: {
     fontSize: 14,
-    color: "#6B7280",
+    color: COLORS.textMuted,
     lineHeight: 20,
     fontWeight: "600",
     marginTop: 8,
@@ -1855,7 +2026,7 @@ const styles = StyleSheet.create({
   destinationMainButton: {
     borderRadius: 24,
     overflow: "hidden",
-    shadowColor: "#111827",
+    shadowColor: COLORS.dark3,
     shadowOffset: { width: 0, height: 12 },
     shadowOpacity: 0.2,
     shadowRadius: 18,
@@ -1876,7 +2047,7 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   destinationPlus: {
-    color: "#FFFFFF",
+    color: COLORS.textLight,
     fontSize: 22,
     fontWeight: "900",
   },
@@ -1884,7 +2055,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   destinationButtonTitle: {
-    color: "#FFFFFF",
+    color: COLORS.textLight,
     fontSize: 16,
     fontWeight: "900",
   },
@@ -1895,7 +2066,7 @@ const styles = StyleSheet.create({
     marginTop: 3,
   },
   destinationButtonArrow: {
-    color: "#FFFFFF",
+    color: COLORS.textLight,
     fontSize: 32,
     fontWeight: "300",
   },
@@ -1915,13 +2086,13 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   quickChoiceText: {
-    color: "#111827",
+    color: COLORS.text,
     fontSize: 12,
     fontWeight: "900",
   },
   panelStatsBar: {
     flexDirection: "row",
-    backgroundColor: "#111827",
+    backgroundColor: COLORS.dark3,
     borderRadius: 22,
     padding: 14,
     marginTop: 18,
@@ -1940,7 +2111,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   panelStatValue: {
-    color: "#FFFFFF",
+    color: COLORS.textLight,
     fontSize: 15,
     fontWeight: "900",
     marginTop: 3,
@@ -1978,7 +2149,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   closeModalBtn: {
-    backgroundColor: "#F2F2F7",
+    backgroundColor: COLORS.surfaceSoft,
     width: 40,
     height: 40,
     borderRadius: 20,
@@ -1989,7 +2160,7 @@ const styles = StyleSheet.create({
   closeModalText: {
     fontSize: 15,
     fontWeight: "900",
-    color: "#111827",
+    color: COLORS.text,
   },
   modalHeaderTextBox: {
     flex: 1,
@@ -1997,30 +2168,30 @@ const styles = StyleSheet.create({
   modalHeaderTitle: {
     fontSize: 20,
     fontWeight: "900",
-    color: "#111827",
+    color: COLORS.text,
   },
   modalHeaderSubtitle: {
-    color: "#8E8E93",
+    color: COLORS.textMuted,
     fontSize: 12,
     fontWeight: "700",
     marginTop: 2,
   },
   modalInputWrapper: {
     flexDirection: "row",
-    backgroundColor: "#F2F2F7",
+    backgroundColor: COLORS.surfaceSoft,
     borderRadius: 22,
     paddingHorizontal: 12,
     paddingVertical: 10,
     alignItems: "center",
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: "#E5E5EA",
+    borderColor: COLORS.border,
   },
   inputIconCircle: {
     width: 34,
     height: 34,
     borderRadius: 13,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: COLORS.surface,
     justifyContent: "center",
     alignItems: "center",
     marginRight: 10,
@@ -2031,11 +2202,11 @@ const styles = StyleSheet.create({
   modalTextInput: {
     flex: 1,
     fontSize: 16,
-    color: "#111827",
+    color: COLORS.text,
     fontWeight: "800",
   },
   validateInputBtn: {
-    backgroundColor: "#5856D6",
+    backgroundColor: COLORS.primary,
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 13,
@@ -2047,12 +2218,12 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   validateInputText: {
-    color: "#FFFFFF",
+    color: COLORS.textLight,
     fontSize: 12,
     fontWeight: "900",
   },
   destinationErrorText: {
-    color: "#FF3B30",
+    color: COLORS.secondary,
     fontSize: 12,
     fontWeight: "800",
     marginBottom: 10,
@@ -2077,7 +2248,7 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   categoryText: {
-    color: "#111827",
+    color: COLORS.text,
     fontSize: 10,
     fontWeight: "900",
     textAlign: "center",
@@ -2088,7 +2259,7 @@ const styles = StyleSheet.create({
   sectionDividerTitle: {
     fontSize: 11,
     fontWeight: "900",
-    color: "#8E8E93",
+    color: COLORS.textMuted,
     letterSpacing: 1.1,
     marginBottom: 8,
     marginTop: 8,
@@ -2098,7 +2269,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: "#F2F2F7",
+    borderBottomColor: COLORS.surfaceSoft,
   },
   optionIcon: {
     fontSize: 24,
@@ -2112,11 +2283,11 @@ const styles = StyleSheet.create({
   optionLabel: {
     fontSize: 16,
     fontWeight: "900",
-    color: "#111827",
+    color: COLORS.text,
   },
   optionSubLabel: {
     fontSize: 13,
-    color: "#8E8E93",
+    color: COLORS.textMuted,
     marginTop: 3,
     fontWeight: "700",
   },
@@ -2149,27 +2320,33 @@ const styles = StyleSheet.create({
     paddingRight: 10,
   },
   summaryOverline: {
-    color: "#34C759",
+    color: COLORS.primary,
     fontSize: 11,
     fontWeight: "900",
     letterSpacing: 0.8,
   },
   summaryTitle: {
-    color: "#FFFFFF",
+    color: COLORS.textLight,
     fontSize: 15,
     fontWeight: "900",
     marginTop: 3,
   },
   liveBadge: {
-    backgroundColor: "rgba(52,199,89,0.16)",
+    backgroundColor: "rgba(11,143,85,0.18)",
     paddingVertical: 6,
     paddingHorizontal: 9,
     borderRadius: 999,
   },
+  liveBadgeAlert: {
+    backgroundColor: "rgba(255,255,255,0.18)",
+  },
   liveBadgeText: {
-    color: "#34C759",
+    color: COLORS.primary,
     fontSize: 10,
     fontWeight: "900",
+  },
+  liveBadgeTextAlert: {
+    color: COLORS.textLight,
   },
   summaryRow: {
     flexDirection: "row",
@@ -2185,19 +2362,19 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   summaryMetricValue: {
-    color: "#FFFFFF",
+    color: COLORS.textLight,
     fontSize: 14,
     fontWeight: "900",
     marginTop: 2,
   },
   cancelRouteBtn: {
-    backgroundColor: "#FF3B30",
+    backgroundColor: COLORS.secondary,
     paddingVertical: 9,
     paddingHorizontal: 12,
     borderRadius: 14,
   },
   cancelRouteText: {
-    color: "#FFFFFF",
+    color: COLORS.textLight,
     fontSize: 12,
     fontWeight: "900",
   },
@@ -2216,7 +2393,7 @@ const styles = StyleSheet.create({
     zIndex: 100,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.7)",
-    shadowColor: "#111827",
+    shadowColor: COLORS.dark3,
     shadowOffset: { width: 0, height: 12 },
     shadowOpacity: 0.18,
     shadowRadius: 22,
@@ -2236,17 +2413,17 @@ const styles = StyleSheet.create({
     marginBottom: 3,
   },
   tabIconBubbleActive: {
-    backgroundColor: "rgba(88,86,214,0.14)",
+    backgroundColor: "rgba(11,143,85,0.14)",
   },
   tabIcon: {
     fontSize: 19,
   },
   tabLabel: {
     fontSize: 11,
-    color: "#8E8E93",
+    color: COLORS.textMuted,
     fontWeight: "900",
   },
   tabLabelActive: {
-    color: "#5856D6",
+    color: COLORS.primary,
   },
 });
